@@ -1,0 +1,47 @@
+timezone: Asia/Shanghai
+output_dir: inbox/ai-radar
+max_items_per_source: 20
+dedupe_days: 14
+
+# GitHub repositories, users, and searches to monitor.
+github:
+  repositories:
+    - openai/codex
+    - openai/openai-cookbook
+    - obsidianmd/obsidian-releases
+  searches:
+    - "topic:ai"
+    - "topic:llm"
+    - "topic:obsidian"
+
+# Reddit JSON/RSS endpoints are public and do not require a token for light use.
+reddit:
+  subreddits:
+    - LocalLLaMA
+    - ObsidianMD
+    - ChatGPT
+    - ClaudeAI
+
+# Add RSS/Atom feeds here. These are intentionally editable by the creator.
+feeds:
+  - name: OpenAI News
+    url: https://openai.com/news/rss.xml
+  - name: Hugging Face Blog
+    url: https://huggingface.co/blog/feed.xml
+  - name: Simon Willison
+    url: https://simonwillison.net/atom/everything/
+  - name: Obsidian Blog
+    url: https://obsidian.md/blog/rss.xml
+  - name: Import AI
+    url: https://jack-clark.net/feed/
+
+# X/Twitter is opt-in because reliable collection requires an approved API or RSS bridge.
+x:
+  enabled: false
+  rss_urls: []
+  # Example: https://rsshub.app/twitter/user/openai
+
+# Optional LLM enrichment. Without these secrets, the system still collects links.
+llm:
+  enabled: true
+  model: gpt-4o-mini
