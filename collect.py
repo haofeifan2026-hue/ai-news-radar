@@ -13,9 +13,16 @@ from typing import Any
 import feedparser
 import requests
 import yaml
+from requests import Response
+from requests.exceptions import RequestException
 
 ROOT = pathlib.Path(__file__).resolve().parent
 CONFIG = ROOT / "config.yaml"
+USER_AGENT = "ai-news-radar:v1.0 (by /u/haofeifan2026-hue)"
+DEFAULT_HEADERS = {
+    "Accept": "application/json, application/atom+xml, application/rss+xml, text/xml",
+    "User-Agent": USER_AGENT,
+}
 
 
 def now() -> dt.datetime:
@@ -30,8 +37,39 @@ def item_id(url: str) -> str:
     return hashlib.sha1(url.encode("utf-8")).hexdigest()[:12]
 
 
+def fetch_response(label: str, url: str, *, headers: dict[str, str] | None = None, **kwargs: Any) -> Response | None:
+    """Fetch one source without allowing network failures to stop the run."""
+    request_headers = {**DEFAULT_HEADERS, **(headers or {})}
+    try:
+        response = requests.get(url, headers=request_headers, timeout=20, **kwargs)
+    except RequestException as exc:
+        print(f"warning: {label} request failed: {exc}", file=sys.stderr)
+        return None
+    if response.status_code != 200:
+        print(f"warning: {label} returned HTTP {response.status_code}; skipping", file=sys.stderr)
+        return None
+    return response
+
+
+def fetch_json(label: str, url: str, *, headers: dict[str, str] | None = None, **kwargs: Any) -> Any | None:
+    response = fetch_response(label, url, headers=headers, **kwargs)
+    if response is None:
+        return None
+    try:
+        return response.json()
+    except ValueError as exc:
+        print(f"warning: {label} returned invalid JSON ({exc}); skipping", file=sys.stderr)
+        return None
+
+
 def rss_items(name: str, url: str, limit: int) -> list[dict[str, str]]:
-    parsed = feedparser.parse(url)
+    response = fetch_response(f"RSS {name}", url)
+    if response is None:
+        return []
+    parsed = feedparser.parse(response.content)
+    if parsed.bozo and not parsed.entries:
+        print(f"warning: RSS {name} could not be parsed; skipping", file=sys.stderr)
+        return []
     out = []
     for entry in parsed.entries[:limit]:
         link = entry.get("link", "")
@@ -47,12 +85,16 @@ def github_items(cfg: dict[str, Any], limit: int) -> list[dict[str, str]]:
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
     out = []
     for repo in cfg.get("repositories", []):
-        data = requests.get(f"https://api.github.com/repos/{repo}/releases", headers=headers, timeout=20).json()
+        data = fetch_json(f"GitHub releases {repo}", f"https://api.github.com/repos/{repo}/releases", headers=headers)
+        if not isinstance(data, list):
+            continue
         for release in data[:limit]:
             url = release.get("html_url", "")
             out.append({"id": item_id(url), "source": f"GitHub: {repo}", "title": clean(release.get("name") or release.get("tag_name", "")), "url": url, "summary": clean(release.get("body", ""))})
     for query in cfg.get("searches", []):
-        data = requests.get("https://api.github.com/search/repositories", params={"q": query, "sort": "updated", "per_page": limit}, headers=headers, timeout=20).json()
+        data = fetch_json("GitHub repository search", "https://api.github.com/search/repositories", params={"q": query, "sort": "updated", "per_page": limit}, headers=headers)
+        if not isinstance(data, dict):
+            continue
         for repo in data.get("items", []):
             url = repo.get("html_url", "")
             out.append({"id": item_id(url), "source": "GitHub Search", "title": clean(repo.get("full_name", "")), "url": url, "summary": clean(repo.get("description", ""))})
@@ -61,9 +103,11 @@ def github_items(cfg: dict[str, Any], limit: int) -> list[dict[str, str]]:
 
 def reddit_items(cfg: dict[str, Any], limit: int) -> list[dict[str, str]]:
     out = []
-    headers = {"User-Agent": "codex-ai-radar/1.0"}
+    headers = {"User-Agent": USER_AGENT, "Accept": "application/json"}
     for subreddit in cfg.get("subreddits", []):
-        data = requests.get(f"https://www.reddit.com/r/{subreddit}/new.json", params={"limit": limit}, headers=headers, timeout=20).json()
+        data = fetch_json(f"Reddit r/{subreddit}", f"https://www.reddit.com/r/{subreddit}/new.json", params={"limit": limit}, headers=headers)
+        if not isinstance(data, dict):
+            continue
         for child in data.get("data", {}).get("children", []):
             post = child.get("data", {})
             url = "https://www.reddit.com" + post.get("permalink", "")
